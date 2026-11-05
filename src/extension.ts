@@ -31,6 +31,7 @@ const jobs = new Map<string, Job>();
 const samples = new Map<string, Sample[]>();
 let timer: ReturnType<typeof setInterval> | undefined;
 let lastCtx: ExtensionContext | undefined;
+const hidden = new Set<string>(); // per session (process): ids not drawn here
 
 const save = () => {
   mkdirSync(dirname(STORE), { recursive: true });
@@ -83,6 +84,7 @@ function redraw() {
   const ctx = lastCtx;
   if (!ctx?.hasUI) return;
   for (const job of jobs.values()) {
+    if (hidden.has(job.id)) { ctx.ui.setWidget(`job-progress:${job.id}`, undefined); continue; }
     try { ctx.ui.setWidget(`job-progress:${job.id}`, [render(job)], { placement: "belowEditor" }); }
     catch (e) { ctx.ui.setWidget(`job-progress:${job.id}`, [`${job.label}: ${(e as Error).message}`], { placement: "belowEditor" }); }
   }
@@ -139,13 +141,21 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerCommand("progress", {
-    description: "Show job progress bars; `/progress stop <id>` removes one",
+    description: "Job progress: `/progress` lists, `hide|unhide [id|all]` for this session only, `stop <id>` removes for everyone",
     handler: async (args, ctx) => {
       lastCtx = ctx;
       const [cmd, id] = (args ?? "").trim().split(/\s+/);
-      if (cmd === "stop" && id) { drop(id); ctx.ui.notify(`removed ${id}`, "info"); return; }
+      const targets = () => (!id || id === "all" ? [...jobs.keys()] : jobs.has(id) ? [id] : []);
+      if (cmd === "stop" && id) { drop(id); hidden.delete(id); ctx.ui.notify(`removed ${id}`, "info"); return; }
+      if (cmd === "hide" || cmd === "unhide") {
+        const ids = targets();
+        for (const t of ids) cmd === "hide" ? hidden.add(t) : hidden.delete(t);
+        redraw();
+        ctx.ui.notify(ids.length ? `${cmd === "hide" ? "hidden" : "showing"}: ${ids.join(", ")}` : "no such job", "info");
+        return;
+      }
       redraw();
-      ctx.ui.notify([...jobs.values()].map(j => render(j)).join("\n") || "no jobs", "info");
+      ctx.ui.notify([...jobs.values()].map(j => `${hidden.has(j.id) ? "(hidden) " : ""}${render(j)}`).join("\n") || "no jobs", "info");
     },
   });
 }
