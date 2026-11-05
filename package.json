@@ -1,0 +1,8 @@
+{
+  "name": "pi-job-progress",
+  "version": "0.1.0",
+  "description": "Live progress bars in pi for long background jobs, read from their log files.",
+  "keywords": ["pi-package"],
+  "license": "MIT",
+  "pi": { "extensions": ["./src/extension.ts"] }
+}
