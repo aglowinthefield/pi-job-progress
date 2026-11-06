@@ -26,7 +26,7 @@ Ask the agent to track a job, or call the `job_progress` tool:
 - `show`: a text bar now, for print and RPC modes with no TUI.
 - `list`, `stop`.
 
-`/progress` lists the jobs. `/progress hide [id|all]` and `/progress unhide [id|all]` hide or show bars in the current session only; other sessions are unaffected and hidden state resets on restart. `/progress stop <id>` removes a job for every session. Every session shows every job by default. Jobs persist in `~/.pi/agent/job-progress.json`.
+`/progress` lists the jobs. `/progress hide [id|all]` and `/progress unhide [id|all]` hide or show bars in the current session only; other sessions are unaffected and hidden state resets on restart. `/progress stop <id>` removes a job for every session, and `/progress clear` removes every finished job. A job counts as finished when its `pid` has exited, or, with no `pid`, when its log has been quiet for 5 minutes. Finished jobs remove themselves once the log has been quiet for 10 minutes. Every session shows every job by default. Jobs persist in `~/.pi/agent/job-progress.json`.
 
 Built-in preset: `chip-backfill`.
 

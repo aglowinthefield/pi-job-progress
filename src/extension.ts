@@ -53,6 +53,13 @@ function tail(file: string, bytes = 65536): string {
   } finally { closeSync(fd); }
 }
 const alive = (pid?: number) => { if (!pid) return undefined; try { process.kill(pid, 0); return true; } catch { return false; } };
+const STALE_MS = 5 * 60_000; // no pid: log untouched this long means the job ended
+const REMOVE_AFTER_MS = 10 * 60_000; // finished jobs disappear once the log has been quiet this long
+function isFinished(job: Job): boolean {
+  if (job.pid) return alive(job.pid) === false;
+  return existsSync(job.logFile) && Date.now() - statSync(job.logFile).mtimeMs > STALE_MS;
+}
+const quietFor = (job: Job) => (existsSync(job.logFile) ? Date.now() - statSync(job.logFile).mtimeMs : 0);
 const fmtDur = (s: number) => !isFinite(s) ? "?" : s < 90 ? `${Math.round(s)}s` : s < 5400 ? `${Math.round(s / 60)}m` : `${(s / 3600).toFixed(1)}h`;
 
 function render(job: Job, width = 30): string {
@@ -61,8 +68,8 @@ function render(job: Job, width = 30): string {
   const lines = tail(job.logFile).split("\n");
   let m: RegExpMatchArray | null = null;
   for (let i = lines.length - 1; i >= 0 && !m; i--) m = lines[i].match(re);
-  const running = alive(job.pid);
-  if (!m) return `${job.label}: ${running === false ? "stopped, no progress line yet" : "starting…"}`;
+  const finished = isFinished(job);
+  if (!m) return `${job.label}: ${finished ? "ended, no progress line" : "starting…"}`;
   const done = Number(m[1]);
   const s = samples.get(job.id) ?? [];
   const now = Date.now();
@@ -76,14 +83,15 @@ function render(job: Job, width = 30): string {
   const bar = "█".repeat(f) + "░".repeat(width - f);
   const extra = m.slice(2).map((g, i) => (g ? g + (job.labels?.[i] ?? "") : "")).filter(Boolean).join(" · ");
   const eta = rate > 0 ? fmtDur((job.total - done) / rate) : "?";
-  const state = running === false ? (pct >= 99 ? " ✓ finished" : " ■ stopped") : "";
+  const state = finished ? (pct >= 99 ? " ✓ finished" : " ■ stopped") : "";
   return `${job.label} [${bar}] ${pct}% ${done.toLocaleString()}/${job.total.toLocaleString()}${extra ? " · " + extra : ""} · ${rate.toFixed(1)}/s · eta ${eta}${state}`;
 }
 
 function redraw() {
   const ctx = lastCtx;
   if (!ctx?.hasUI) return;
-  for (const job of jobs.values()) {
+  for (const job of [...jobs.values()]) {
+    if (isFinished(job) && quietFor(job) > REMOVE_AFTER_MS) { drop(job.id); hidden.delete(job.id); continue; }
     if (hidden.has(job.id)) { ctx.ui.setWidget(`job-progress:${job.id}`, undefined); continue; }
     try { ctx.ui.setWidget(`job-progress:${job.id}`, [render(job)], { placement: "belowEditor" }); }
     catch (e) { ctx.ui.setWidget(`job-progress:${job.id}`, [`${job.label}: ${(e as Error).message}`], { placement: "belowEditor" }); }
@@ -141,12 +149,18 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerCommand("progress", {
-    description: "Job progress: `/progress` lists, `hide|unhide [id|all]` for this session only, `stop <id>` removes for everyone",
+    description: "Job progress: `/progress` lists, `hide|unhide [id|all]` for this session only, `clear` removes finished jobs, `stop <id>` removes one for everyone",
     handler: async (args, ctx) => {
       lastCtx = ctx;
       const [cmd, id] = (args ?? "").trim().split(/\s+/);
       const targets = () => (!id || id === "all" ? [...jobs.keys()] : jobs.has(id) ? [id] : []);
       if (cmd === "stop" && id) { drop(id); hidden.delete(id); ctx.ui.notify(`removed ${id}`, "info"); return; }
+      if (cmd === "clear") {
+        const done = [...jobs.values()].filter(isFinished).map(j => j.id);
+        for (const d of done) { drop(d); hidden.delete(d); }
+        ctx.ui.notify(done.length ? `cleared: ${done.join(", ")}` : "no finished jobs", "info");
+        return;
+      }
       if (cmd === "hide" || cmd === "unhide") {
         const ids = targets();
         for (const t of ids) cmd === "hide" ? hidden.add(t) : hidden.delete(t);
