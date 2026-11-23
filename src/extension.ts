@@ -90,6 +90,7 @@ function render(job: Job, width = 30): string {
 function redraw() {
   const ctx = lastCtx;
   if (!ctx?.hasUI) return;
+  // oxlint-disable-next-line unicorn/no-useless-spread -- copies the jobs because drop() deletes from the map mid-loop
   for (const job of [...jobs.values()]) {
     if (isFinished(job) && quietFor(job) > REMOVE_AFTER_MS) { drop(job.id); hidden.delete(job.id); continue; }
     if (hidden.has(job.id)) { ctx.ui.setWidget(`job-progress:${job.id}`, undefined); continue; }
@@ -103,7 +104,7 @@ function ensureTimer() {
 }
 function drop(id: string) {
   jobs.delete(id); samples.delete(id); save();
-  lastCtx?.hasUI && lastCtx.ui.setWidget(`job-progress:${id}`, undefined);
+  if (lastCtx?.hasUI) lastCtx.ui.setWidget(`job-progress:${id}`, undefined);
   ensureTimer();
 }
 
@@ -163,7 +164,10 @@ export default function (pi: ExtensionAPI) {
       }
       if (cmd === "hide" || cmd === "unhide") {
         const ids = targets();
-        for (const t of ids) cmd === "hide" ? hidden.add(t) : hidden.delete(t);
+        for (const t of ids) {
+          if (cmd === "hide") hidden.add(t);
+          else hidden.delete(t);
+        }
         redraw();
         ctx.ui.notify(ids.length ? `${cmd === "hide" ? "hidden" : "showing"}: ${ids.join(", ")}` : "no such job", "info");
         return;
